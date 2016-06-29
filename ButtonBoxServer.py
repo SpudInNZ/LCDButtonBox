@@ -64,10 +64,9 @@ class ButtonBoxServer:
                 # and not every 1 sec
 
         pitSvFlags = ir['PitSvFlags']
-        if pitSvFlags:
-            if pitSvFlags != self._pitSvFlags:
-                self._pitSvFlags = pitSvFlags
-                self.sendViaSerial("P " + pitSvFlags + "!")
+        if pitSvFlags != self._pitSvFlags:
+            self._pitSvFlags = pitSvFlags
+            self.sendViaSerial("P " + str(pitSvFlags) + "!")
 
     def sendViaSerial(self, str):  # Function to send data to the Arduino
         self._ser.write(bytes(str.encode('ascii')))  # Send the string to the Arduino 1 byte at a time.
@@ -76,7 +75,7 @@ class ButtonBoxServer:
         self._pitSvFlags = None
         self._ser = serial.Serial('com3', 9600)
         time.sleep(1)
-        self.sendViaSerial("BB Server v1.0!")
+        self.sendViaSerial("#BB Server v1.0!")
         time.sleep(1)
 
 

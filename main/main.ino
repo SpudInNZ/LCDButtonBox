@@ -19,10 +19,20 @@ uint8_t I2C_LCD_ADDRESS = 0x51; //Device address configuration, the default valu
 #define PRESSED LOW
 #define NOTPRESSED HIGH
 
+struct iRacingConstants
+{
+    const int lf_tire_change     = 0x01;
+    const int rf_tire_change     = 0x02;
+    const int lr_tire_change     = 0x04;
+    const int rr_tire_change     = 0x08;
+    const int fuel_fill          = 0x10;
+    const int windshield_tearoff = 0x20;
+    const int fast_repair        = 0x40;
+};
+
 //#define ENCODERS 3
 //int firstPinToJoystick = 32;
 
-String str = ""; 
 //ClickEncoder* encoders[ENCODERS];
 //
 //void timerIsr() {
@@ -115,15 +125,54 @@ void loop()
         String str = Serial.readStringUntil('!');
         content.concat(str);
 
-        //switch(str.charAt(0))
-        //{
-        //  case 'P':
-        //    str.remove(0, 1);
+        switch(str.charAt(0))
+        {
+          case '#':
+          {
+            // text
+            str.remove(0, 1);
             LCD.CharGotoXY(3, 12);
             LCD.print(str);
+            break;
+            }
+          case 'P':
+          {
+            // Pit info
+            str.remove(0, 1);
             LCD.CharGotoXY(3, 20);
-            LCD.print(content);
-        //}
+            LCD.print(str);
+            int pitFlags = str.toInt();
+            bool tyresLight = pitFlags & (15) == 15;
+            if (tyresLight)
+            {
+                digitalWrite(TYRES_LED, HIGH);
+            }
+            else
+            {
+                digitalWrite(TYRES_LED, LOW);
+            }
+            if (pitFlags & 0x10)
+            {
+                digitalWrite(REFUEL_LED, HIGH);
+            }
+            else
+            {
+                digitalWrite(REFUEL_LED, LOW);
+            }
+            if (pitFlags & 0x40)
+            {
+                digitalWrite(REPAIR_LED, HIGH);
+            }
+            else
+            {
+               digitalWrite(REPAIR_LED, LOW);
+            }
+            
+            break;
+            }
+          default:
+            break;
+        }
     }
 }
     
