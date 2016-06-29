@@ -2,7 +2,7 @@
 
 import irsdk
 import time
-
+import serial
 
 # this is our State class, with some helpful variables
 class State:
@@ -25,11 +25,8 @@ def check_iracing():
         print('irsdk connected')
 
 
-class PiRacing:
 
-    def __init__(self):
-        self._last_lap_dist_pct = 0.0
-        self._last_lap = 0
+class ButtonBoxServer:
 
     # our main loop, where we retrieve data
     # and do something useful with it
@@ -66,50 +63,29 @@ class PiRacing:
                 # and that this line will be printed, only when you change something
                 # and not every 1 sec
 
-        weekend_info = ir['WeekendInfo']
-        if weekend_info:
-            pass
+        pitSvFlags = ir['PitSvFlags']
+        if pitSvFlags:
+            if pitSvFlags != self._pitSvFlags:
+                self._pitSvFlags = pitSvFlags
+                self.sendViaSerial("P " + pitSvFlags + "!")
 
-        lap = ir['Lap']
-        lap_dist_pct = ir['LapDistPct']
+    def sendViaSerial(self, str):  # Function to send data to the Arduino
+        self._ser.write(bytes(str.encode('ascii')))  # Send the string to the Arduino 1 byte at a time.
 
-        if not (lap == self._last_lap and self._last_lap_dist_pct == lap_dist_pct):
-            if self._last_lap_dist_pct <= lap_dist_pct:
-                dt = lap_dist_pct - self._last_lap_dist_pct
-            else:
-                dt = (1.0-self._last_lap_dist_pct) + lap_dist_pct
+    def __init__(self):
+        self._pitSvFlags = None
+        self._ser = serial.Serial('com3', 9600)
+        time.sleep(1)
+        self.sendViaSerial("BB Server v1.0!")
+        time.sleep(1)
 
-            rounded = round(dt, 5)
-            if rounded > 0:
-                print("Distance" + str(rounded))
-                self._last_lap = lap
-                self._last_lap_dist_pct = lap_dist_pct
-
-        # note about session info data
-        # you should always check if data is available
-        # before do something like ir['WeekendInfo']['TeamRacing']
-        # so do like this:
-        # if ir['WeekendInfo']:
-        #   print(ir['WeekendInfo']['TeamRacing'])
-
-        # and just as an example
-        # you can send commands to iracing
-        # like switch cameras, rewind in replay mode, send chat and pit commands, etc
-        # check pyirsdk.py library to see what commands are available
-        # https://github.com/kutu/pyirsdk/blob/master/irsdk.py#L332
-        # when you run this script, camera will be switched to P1
-        # and very first camera in list of cameras in iracing
-        # while script is running, change camera by yourself in iracing
-        # and how it changed back every 1 sec
-        # ir.cam_switch_pos(0, 1)
 
 if __name__ == '__main__':
     # initializing ir and state
     ir = irsdk.IRSDK()
     state = State()
 
-    pir = PiRacing()
-
+    bbs = ButtonBoxServer()
     try:
         # infinite loop
         while True:
@@ -117,7 +93,7 @@ if __name__ == '__main__':
             check_iracing()
             # if we are, then process data
             if state.ir_connected:
-                pir.loop()
+                bbs.loop()
             # sleep for 1 second
             # maximum you can use is 1/60
             # cause iracing update data with 60 fps
