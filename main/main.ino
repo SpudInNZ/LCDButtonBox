@@ -105,7 +105,7 @@ void setup() {
   //Timer1.attachInterrupt(timerIsr); 
   Wire.begin();         //I2C controller initialization.
   LCD.CleanAll(WHITE);    //Clean the screen with black or white.
-  LCD.FontModeConf(Font_6x8, FM_ANL_AAA, BLACK_BAC); 
+  LCD.FontModeConf(Font_6x12, FM_ANL_AAA, BLACK_BAC); 
 //
 //  TestLED(ABS_LED, "ABS");
 //  TestLED(TRACTION_LED, "Traction Control");
@@ -139,8 +139,6 @@ void loop()
           {
             // Pit info
             str.remove(0, 1);
-            LCD.CharGotoXY(3, 20);
-            LCD.print(str);
             int pitFlags = str.toInt();
             bool tyresLight = pitFlags & (15) == 15;
             if (tyresLight)
@@ -170,6 +168,16 @@ void loop()
             
             break;
             }
+          case 'T':
+          {
+            // Time
+            str.remove(0, 1);
+            LCD.CharGotoXY(3, 0);
+            LCD.print(str);
+
+            break;
+          }
+            
           default:
             break;
         }

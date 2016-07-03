@@ -25,8 +25,31 @@ def check_iracing():
         print('irsdk connected')
 
 
+class Car:
+
+    def __int__(self, carname):
+        self._carName = carname
+
+    def getNextRaceTime(self):
+        if self._carName == 'j':
+            pass
+
 
 class ButtonBoxServer:
+
+    def setCarInfo(self):
+        driverInfo = ir['DriverInfo']
+        if driverInfo:
+            driverCarIdx = driverInfo['DriverCarIdx']
+            if driverCarIdx:
+                drivers = driverInfo['Drivers']
+                if drivers:
+                    for driver in drivers:
+                        if driver['CarIdx'] == driverCarIdx:
+                            shortName = driver['CarClassShortName']
+                            self._driverCar = Car()
+                            self._driverCar._carName = shortName;
+                            self.sendViaSerial("#Car: " + shortName + "!")
 
     # our main loop, where we retrieve data
     # and do something useful with it
@@ -40,6 +63,15 @@ class ButtonBoxServer:
         # another one in next line of code can be changed
         # to the next iracing internal tick_count
         ir.freeze_var_buffer_latest()
+
+
+        if time.monotonic() - self._lastClockTime > 10:
+            self._lastClockTime = time.monotonic()
+            timestr = time.strftime('%I:%M:%S')
+            self.sendViaSerial("T" + timestr + "     !")
+
+        if self._driverCar is None:
+            self.setCarInfo()
 
         # retrieve live telemetry data
         # check here for list of available variables
@@ -70,12 +102,13 @@ class ButtonBoxServer:
 
     def sendViaSerial(self, str):  # Function to send data to the Arduino
         self._ser.write(bytes(str.encode('ascii')))  # Send the string to the Arduino 1 byte at a time.
+        time.sleep(1)
 
     def __init__(self):
+        self._lastClockTime = time.monotonic()
         self._pitSvFlags = None
+        self._driverCar = None
         self._ser = serial.Serial('com3', 9600)
-        time.sleep(1)
-        self.sendViaSerial("#BB Server v1.0!")
         time.sleep(1)
 
 
