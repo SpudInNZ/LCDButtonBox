@@ -3,6 +3,7 @@
 import irsdk
 import time
 import serial
+import math
 
 # this is our State class, with some helpful variables
 class State:
@@ -65,10 +66,10 @@ class ButtonBoxServer:
         ir.freeze_var_buffer_latest()
 
 
-        if time.monotonic() - self._lastClockTime > 10:
-            self._lastClockTime = time.monotonic()
-            timestr = time.strftime('%I:%M:%S')
-            self.sendViaSerial("T" + timestr + "     !")
+        if self._lastClockTime is None:
+            self._lastClockTime = time.time()
+            s = int(round(self._lastClockTime, 0))
+            self.sendViaSerial("X" + str(s) + "!")
 
         if self._driverCar is None:
             self.setCarInfo()
@@ -105,7 +106,7 @@ class ButtonBoxServer:
         time.sleep(1)
 
     def __init__(self):
-        self._lastClockTime = time.monotonic()
+        self._lastClockTime = None
         self._pitSvFlags = None
         self._driverCar = None
         self._ser = serial.Serial('com3', 9600)
