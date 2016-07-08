@@ -29,6 +29,8 @@ struct iRacingConstants
 };
 
 #define ENCODERS 3
+int16_t lastEncoderValues[ENCODERS];
+
 int firstPinToJoystick = 32;
 
 ClickEncoder* encoders[ENCODERS];
@@ -68,6 +70,7 @@ void setup() {
     pinMode(firstPinToJoystick+(f*2)+1, OUTPUT);
     digitalWrite(firstPinToJoystick+(f*2), LOW);
     digitalWrite(firstPinToJoystick+(f*2)+1, LOW);
+    lastEncoderValues[f] = 0;
     
     encoders[f] -> setAccelerationEnabled(true);
   }
@@ -97,7 +100,7 @@ void setup() {
 
 void loop() 
 {
-if (timeStatus() == timeSet)
+  if (timeStatus() == timeSet)
   {
     String s(hour());
     s = s + ":";
@@ -125,6 +128,24 @@ if (timeStatus() == timeSet)
     LCD.print("Time not set");
   
   }
+
+  for (int f= 0; f< ENCODERS; ++f)    
+  {
+    int value = encoders[f] -> getValue();
+    if (value > 0)
+    {
+       digitalWrite(firstPinToJoystick + f*2, HIGH);
+       delay(30);
+       digitalWrite(firstPinToJoystick + f*2, LOW);
+    }
+    else if (value < 0)
+    {
+       digitalWrite(firstPinToJoystick + f*2+1, HIGH);
+       delay(30);
+       digitalWrite(firstPinToJoystick + f*2+1, LOW);
+    }
+  }
+  
   
     while (Serial.available())
     {
