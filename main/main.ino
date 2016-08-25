@@ -29,7 +29,6 @@ struct iRacingConstants
 };
 
 #define ENCODERS 3
-int16_t lastEncoderValues[ENCODERS];
 
 int firstPinToJoystick = 32;
 
@@ -70,8 +69,6 @@ void setup() {
     pinMode(firstPinToJoystick+(f*2)+1, OUTPUT);
     digitalWrite(firstPinToJoystick+(f*2), LOW);
     digitalWrite(firstPinToJoystick+(f*2)+1, LOW);
-    lastEncoderValues[f] = 0;
-    
     encoders[f] -> setAccelerationEnabled(true);
   }
   for(int x = 0; x< 3; ++x)
@@ -125,7 +122,7 @@ void loop()
   else
   {
     LCD.CharGotoXY(3, 0);
-    LCD.print("Time not set");
+    LCD.print("                   ");
   
   }
 
@@ -155,6 +152,13 @@ void loop()
 
         switch(str.charAt(0))
         {
+          case 'F':
+          {
+            str.remove(0, 1);
+            LCD.CharGotoXY(3, 24);
+            LCD.print("Fuel: " + str + " ");
+            break;
+          }
           case '#':
           {
             // text
