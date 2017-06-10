@@ -1,9 +1,8 @@
-#include "ButtonBox.h"
+#include <Arduino.h>
+#include <Wire.h>
 #include <TimerOne.h>
 #include <ClickEncoder.h>
 #include <TimeLib.h>
-
-#include <Wire.h>
 #include <I2C_LCD.h>
 I2C_LCD LCD;
 uint8_t I2C_LCD_ADDRESS = 0x51; //Device address configuration, the default value is 0x51.
@@ -32,6 +31,9 @@ struct iRacingConstants
 
 int firstPinToJoystick = 32;
 
+int tc = -1;
+float bb = -1;
+
 ClickEncoder* encoders[ENCODERS];
 
 void timerIsr() {
@@ -55,7 +57,7 @@ void FlashLED(int pinNumber, int flashCount = 3)
 }
 void setup() {
   
-  Serial.begin(9600);
+  Serial.begin(115200);
   for(int ledPin=14; ledPin < 19; ++ledPin)
   {
     pinMode(ledPin, OUTPUT);
@@ -89,11 +91,61 @@ void setup() {
   LCD.CleanAll(WHITE);    //Clean the screen with black or white.
   LCD.FontModeConf(Font_6x12, FM_ANL_AAA, BLACK_BAC); 
 
-  Timer1.initialize(1000);
+  Timer1.initialize(500);
   Timer1.attachInterrupt(timerIsr); 
  
 }
 
+void displayTCandBB() 
+{
+  // text
+  
+  LCD.CharGotoXY(3, 12);
+  
+  String s = "BB: ";
+  s = s + bb;
+  if (tc > 0)
+  {
+    s = s + " TC: ";
+    s = s + tc;
+    s = s + "  ";
+    if (tc == 1) {
+      digitalWrite(TRACTION_LED, HIGH);
+    }
+    else {
+      digitalWrite(TRACTION_LED, LOW);
+    }
+  }
+  else 
+  {
+    s = s + "         ";
+  }
+  
+  LCD.print(s);
+  
+}
+
+void handleEncoders() 
+{
+  for (int f= 0; f< ENCODERS; ++f)    
+  {
+    int value = encoders[f] -> getValue();
+    if (value > 0)
+    {
+       digitalWrite(firstPinToJoystick + f*2, HIGH);
+       delay(30);
+       digitalWrite(firstPinToJoystick + f*2, LOW);
+    }
+    else if (value < 0)
+    {
+       digitalWrite(firstPinToJoystick + f*2+1, HIGH);
+       delay(30);
+       digitalWrite(firstPinToJoystick + f*2+1, LOW);
+    }
+  }
+}
+
+String lastTime = "";
 
 void loop() 
 {
@@ -115,114 +167,113 @@ void loop()
     }
     s = s + String(secs);
     s = s + "       ";
-    
-    LCD.CharGotoXY(3, 0);    
-    LCD.print(s);
+    if (lastTime != s) {
+      lastTime = s;
+      LCD.CharGotoXY(3, 0);    
+      LCD.print(s);
+    }
   }
   else
   {
     LCD.CharGotoXY(3, 0);
     LCD.print("                   ");
-  
   }
-
-  for (int f= 0; f< ENCODERS; ++f)    
+  handleEncoders();
+  
+  while (Serial.available())
   {
-    int value = encoders[f] -> getValue();
-    if (value > 0)
-    {
-       digitalWrite(firstPinToJoystick + f*2, HIGH);
-       delay(30);
-       digitalWrite(firstPinToJoystick + f*2, LOW);
-    }
-    else if (value < 0)
-    {
-       digitalWrite(firstPinToJoystick + f*2+1, HIGH);
-       delay(30);
-       digitalWrite(firstPinToJoystick + f*2+1, LOW);
-    }
-  }
-  
-  
-    while (Serial.available())
-    {
-        String content = "";         // INBOUND SERIAL STRING
-        String str = Serial.readStringUntil('!');
-        content.concat(str);
+      String content = "";         // INBOUND SERIAL STRING
+      String str = Serial.readStringUntil('!');
+      content.concat(str);
+      handleEncoders();
 
-        switch(str.charAt(0))
+      switch(str.charAt(0))
+      {
+        case 'F':
         {
-          case 'F':
-          {
-            str.remove(0, 1);
-            LCD.CharGotoXY(3, 24);
-            LCD.print("Fuel: " + str + " ");
-            break;
-          }
-          case '#':
-          {
-            // text
-            str.remove(0, 1);
-            LCD.CharGotoXY(3, 12);
-            LCD.print(str);
-            break;
-            }
-          case 'P':
-          {
-            // Pit info
-            str.remove(0, 1);
-            int pitFlags = str.toInt();
-            bool tyresLight = pitFlags & (15) == 15;
-            if (tyresLight)
-            {
-                digitalWrite(TYRES_LED, HIGH);
-            }
-            else
-            {
-                digitalWrite(TYRES_LED, LOW);
-            }
-            if (pitFlags & 0x10)
-            {
-                digitalWrite(REFUEL_LED, HIGH);
-            }
-            else
-            {
-                digitalWrite(REFUEL_LED, LOW);
-            }
-            if (pitFlags & 0x40)
-            {
-                digitalWrite(REPAIR_LED, HIGH);
-            }
-            else
-            {
-               digitalWrite(REPAIR_LED, LOW);
-            }
-            
-            break;
-            }
-         
-          case 'X':
-          {
-            // Timestamp
-            const unsigned long DEFAULT_TIME = 1357041600;
-            str.remove(0,1);
-            unsigned long pctime = str.toInt();
-            if (pctime > DEFAULT_TIME)
-            {
-              setTime(pctime);
-            }
-            else
-            {
-              LCD.CharGotoXY(3, 0);
-              LCD.print(str);
-            }
-            break;
-          }
-            
-          default:
-            break;
+          str.remove(0, 1);
+          LCD.CharGotoXY(3, 24);
+          LCD.print("Fuel: " + str + " ");
+          break;
         }
-    }
+        case 'T': // Traction control
+        {
+          str.remove(0,1);
+          tc = str.toInt();
+          displayTCandBB();
+          break;
+        }
+        case 'B': // Brake bias
+        {
+          str.remove(0,1);
+          bb = str.toFloat();
+          displayTCandBB();
+          break;
+        }
+
+        case 'O': // oil
+        {
+          str.remove(0, 1);
+          LCD.CharGotoXY(3, 36);
+          LCD.print("Temp: " + str + " ");
+          break;
+        }
+        case 'P':
+        {
+          // Pit info
+          str.remove(0, 1);
+          int pitFlags = str.toInt();
+          bool tyresLight = pitFlags & (15) == 15;
+          if (tyresLight)
+          {
+              digitalWrite(TYRES_LED, HIGH);
+          }
+          else
+          {
+              digitalWrite(TYRES_LED, LOW);
+          }
+          if (pitFlags & 0x10)
+          {
+              digitalWrite(REFUEL_LED, HIGH);
+          }
+          else
+          {
+              digitalWrite(REFUEL_LED, LOW);
+          }
+          if (pitFlags & 0x40)
+          {
+              digitalWrite(REPAIR_LED, HIGH);
+          }
+          else
+          {
+             digitalWrite(REPAIR_LED, LOW);
+          }
+          
+          break;
+          }
+       
+        case 'X':
+        {
+          // Timestamp
+          const unsigned long DEFAULT_TIME = 1357041600;
+          str.remove(0,1);
+          unsigned long pctime = str.toInt();
+          if (pctime > DEFAULT_TIME)
+          {
+            setTime(pctime);
+          }
+          else
+          {
+            LCD.CharGotoXY(3, 0);
+            LCD.print(str);
+          }
+          break;
+        }
+          
+        default:
+          break;
+      }
+  }
 }
 
 
