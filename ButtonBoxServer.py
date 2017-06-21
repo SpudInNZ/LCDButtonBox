@@ -4,12 +4,15 @@ import irsdk
 import time
 import serial
 import argparse
+import math
 
 
 # this is our State class, with some helpful variables
 class State:
     ir_connected = False
     last_car_setup_tick = -1
+    last_driver_info_tick = -1
+    track_temp = 0
 
 
 class Car:
@@ -96,6 +99,32 @@ class ButtonBoxServer:
             if self._oiltemp != round(oil_temp, 1):
                 self._oiltemp = round(oil_temp, 1)
                 to_send.append("O " + str(round(oil_temp, 1)))
+
+        driver_info = ir['DriverInfo']
+        if driver_info:
+            driver_info_tick = ir.get_session_info_update_by_key('DriverInfo')
+            if driver_info_tick != state.last_driver_info_tick:
+
+                track_temp = ir['TrackTempCrew']
+                if state.track_temp != track_temp:
+                    state.track_temp = track_temp
+                    to_send.append('t '+str(math.floor(track_temp)))
+
+                state.last_driver_info_tick = driver_info_tick
+                irating = 0
+                drivers = driver_info['Drivers']
+                driver_count = 0
+                for driver in drivers:
+                    assert 'CarNumber' in driver
+                    car_number = int(driver['CarNumber'])
+                    if car_number > 0 and driver['IsSpectator'] != 1:
+                        print("Driver: {} Rating {}".format(driver['UserName'], driver['IRating']))
+                        driver_count += 1
+                        irating += driver['IRating']
+
+                print("Divers {}".format(driver_count))
+                avg_irating = int(math.floor(irating / driver_count))
+                to_send.append("I " + str(avg_irating))
 
         # retrieve CarSetup from session data
         # we also check if CarSetup data has been updated

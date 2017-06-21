@@ -189,11 +189,18 @@ void loop()
 
       switch(str.charAt(0))
       {
+        case 't':
+        {
+          str.remove(0, 1);
+          LCD.CharGotoXY(72, 50);
+          LCD.print("Trk:" + str + "  ");
+          break;
+        }
         case 'F':
         {
           str.remove(0, 1);
           LCD.CharGotoXY(3, 24);
-          LCD.print("Fuel: " + str + " ");
+          LCD.print("Fuel:" + str + "  ");
           break;
         }
         case 'T': // Traction control
@@ -210,12 +217,18 @@ void loop()
           displayTCandBB();
           break;
         }
-
+        case 'I': // session SOF
+        {
+          str.remove(0, 1);
+          LCD.CharGotoXY(3, 50);
+          LCD.print("SOF:" + str + "   ");
+          break;
+        }
         case 'O': // oil
         {
           str.remove(0, 1);
           LCD.CharGotoXY(3, 36);
-          LCD.print("Temp: " + str + " ");
+          LCD.print("Temp:" + str + "  ");
           break;
         }
         case 'P':
