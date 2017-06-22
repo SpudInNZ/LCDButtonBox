@@ -5,6 +5,7 @@ import time
 import serial
 import argparse
 import math
+import statistics
 
 
 # this is our State class, with some helpful variables
@@ -122,9 +123,12 @@ class ButtonBoxServer:
                         driver_count += 1
                         irating += driver['IRating']
 
-                print("Divers {}".format(driver_count))
+                print("Drivers:{}  Total rating:{}".format(driver_count, irating))
+
                 avg_irating = int(math.floor(irating / driver_count))
                 to_send.append("I " + str(avg_irating))
+
+        n = ir['WeeekendInfo']
 
         # retrieve CarSetup from session data
         # we also check if CarSetup data has been updated

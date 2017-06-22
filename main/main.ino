@@ -192,7 +192,7 @@ void loop()
         case 't':
         {
           str.remove(0, 1);
-          LCD.CharGotoXY(72, 50);
+          LCD.CharGotoXY(82, 50);
           LCD.print("Trk:" + str + "  ");
           break;
         }
