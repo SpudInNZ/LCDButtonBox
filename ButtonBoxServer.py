@@ -27,7 +27,6 @@ OIL_TEMP_CRITICAL_TEMP = 143.5  # Always alert if this level, ignore OIL_TEMP_WA
 OIL_TEMP_WARNING_DIFF = 0.3  # Next warning if temp rises by this much
 OIL_TEMP_WARNING_FREQUENCY_SECONDS = 12  # Max frequency of warnings
 
-
 REPORT_SOF_IN_PRACTICE = False
 
 ALL_TYRES = (irsdk.PitSvFlags.lf_tire_change +
@@ -60,7 +59,7 @@ class ArduinoComms:
         self.send_via_serial("X" + str(s) + "!")
 
     def send_via_serial(self, msg: str):  # Function to send data to the Arduino
-        log.debug('Sending ' + msg)
+        # log.debug('Sending ' + msg)
         self.ser.write(bytes(msg.encode('ascii')))  # Send the string to the Arduino 1 byte at a time.
         time.sleep(0.1)
 
@@ -195,7 +194,8 @@ class ButtonBoxServer:
                 if sof != self._sof:
                     self._sof = sof
                     log.info("Drivers:{}  Total SoF:{}".format(driver_count, sof))
-                    if not self._sof_reported and not self.is_practice() and REPORT_SOF_IN_PRACTICE:
+                    if not self._sof_reported and (
+                            not self.is_practice() or (self.is_practice() and REPORT_SOF_IN_PRACTICE)):
                         speak.Speak(f"SOF is {sof}")
                         to_send.append(f"I {sof}")
                         self._sof_reported = True
@@ -219,7 +219,6 @@ class ButtonBoxServer:
             car_setup_tick = ir.get_session_info_update_by_key('CarSetup')
             if car_setup_tick != state.last_car_setup_tick:
                 state.last_car_setup_tick = car_setup_tick
-                log.debug(f"car setup update count: {car_setup['UpdateCount']}")
                 # now you can go to garage, and do some changes with your setup
                 # and that this line will be printed, only when you change something
                 # and not every 1 sec
@@ -318,6 +317,7 @@ if __name__ == '__main__':
     # initializing ir and state
     ir = irsdk.IRSDK()
     state = State()
+    log.info(f"Waiting for connection")
 
     try:
         # infinite loop
