@@ -23,8 +23,10 @@ log = logging.getLogger()
 speak = wc.Dispatch("Sapi.SpVoice")
 
 OIL_TEMP_WARNING_TEMP = 142  # Minimum temp before warning
+OIL_TEMP_CRITICAL_TEMP = 143.5  # Always alert if this level, ignore OIL_TEMP_WARNING_FREQUENCY_SECONDS
 OIL_TEMP_WARNING_DIFF = 0.3  # Next warning if temp rises by this much
-OIL_TEMP_WARNING_FREQUENCY_SECONDS = 10  # Max frequency of warnings
+OIL_TEMP_WARNING_FREQUENCY_SECONDS = 12  # Max frequency of warnings
+
 
 REPORT_SOF_IN_PRACTICE = False
 
@@ -65,6 +67,8 @@ class ArduinoComms:
 
 class ButtonBoxServer:
     def __init__(self):
+
+        self._started_at = datetime.datetime.now()
         self._pit_sv_flags = -1
         self._tc = 0.0
         self._bb = 0.0
@@ -83,7 +87,9 @@ class ButtonBoxServer:
 
         self._my_car_idx = ir['PlayerCarIdx']
 
-        self._event_type = ir["WeekendInfo"]['EventType']
+        self._event_type = None
+
+        self._critical_engine_temp_alert_sent = False
 
     # our main loop, where we retrieve data
     # and do something useful with it
@@ -112,6 +118,9 @@ class ButtonBoxServer:
         to_send: List[str] = list()
 
         weekend_info = ir['WeekendInfo']
+        if not self._event_type:
+            self._event_type = weekend_info['EventType']
+
         is_on_track = ir['IsOnTrack'] == 1
 
         if not is_on_track:
@@ -132,6 +141,11 @@ class ButtonBoxServer:
 
             oiltemp = round(ir['OilTemp'], 1)
 
+            if oiltemp > OIL_TEMP_CRITICAL_TEMP and not self._critical_engine_temp_alert_sent:
+                speak.Speak(f"Critical engine temp {oiltemp}")
+            elif oiltemp < OIL_TEMP_CRITICAL_TEMP:
+                self._critical_engine_temp_alert_sent = False
+
             if oiltemp > OIL_TEMP_WARNING_TEMP:
                 if (datetime.datetime.now() - self._last_temp_warning_at).seconds >= OIL_TEMP_WARNING_FREQUENCY_SECONDS:
 
@@ -144,6 +158,10 @@ class ButtonBoxServer:
                         speak.Speak(f"Engine temp falling")
                         self._last_temp_warning_at = datetime.datetime.now()
 
+            elif self._last_warning_temp:
+                speak.Speak(f"Safe engine temp {oiltemp}")
+                self._last_warning_temp = 0.0
+
             if self._oiltemp != oiltemp:
                 self._oiltemp = oiltemp
                 to_send.append(f"O {oiltemp}")
@@ -154,7 +172,7 @@ class ButtonBoxServer:
             if driver_info_tick != state.last_driver_info_tick:
 
                 track_temp = round(ir['TrackTempCrew'], 1)
-                if state.track_temp != track_temp:
+                if track_temp > 0 and state.track_temp != track_temp:
                     state.track_temp = track_temp
                     to_send.append('t ' + str(math.floor(track_temp)))
                     speak.Speak(f"Track temp is {track_temp} degrees")
@@ -162,7 +180,6 @@ class ButtonBoxServer:
                 state.last_driver_info_tick = driver_info_tick
                 irating_sum = 0
                 drivers = driver_info['Drivers']
-                my_driver = drivers[self._my_car_idx]
                 ln = 1600 / math.log(2)
 
                 current_drivers: Dict[str, int] = {}
@@ -178,17 +195,18 @@ class ButtonBoxServer:
                 if sof != self._sof:
                     self._sof = sof
                     log.info("Drivers:{}  Total SoF:{}".format(driver_count, sof))
-                    if not self._sof_reported and not self.is_practice():
+                    if not self._sof_reported and not self.is_practice() and REPORT_SOF_IN_PRACTICE:
                         speak.Speak(f"SOF is {sof}")
                         to_send.append(f"I {sof}")
                         self._sof_reported = True
 
                 new_drivers: Dict[str, int] = {name: irating for name, irating in current_drivers.items() if
                                                name not in self._drivers}
+
                 for name, irating in new_drivers.items():
                     log.debug(f"Driver {name} - {irating}")
-                    if len(self._drivers):
-                        speak.Speak(f"Driver {name} joined the server, rating {irating}")
+                    if len(self._drivers) and self.is_practice():
+                        speak.Speak(f"{name} joined, rating {irating}")
 
                 self._drivers = current_drivers
 
@@ -208,6 +226,7 @@ class ButtonBoxServer:
 
         bb = ir['dcBrakeBias']
         if bb and self._bb != bb:
+            bb = round(bb, 1)
             if self._bb > 0:
                 # BB is changing
                 speak.Speak(f"Brake balance {bb}")
@@ -216,6 +235,7 @@ class ButtonBoxServer:
 
         tc = ir['dcTractionControl']
         if tc and self._tc != tc:
+            tc = round(tc, 0)
             if self._tc > 0:
                 # BB is changing
                 speak.Speak(f"Traction is {tc}")
