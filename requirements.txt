@@ -1,0 +1,4 @@
+pyirsdk
+pyaml
+pywin32
+pyserial
