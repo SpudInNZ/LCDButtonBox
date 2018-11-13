@@ -22,12 +22,16 @@ log = logging.getLogger()
 
 speak = wc.Dispatch("Sapi.SpVoice")
 
-OIL_TEMP_WARNING_TEMP = 142  # Minimum temp before warning
-OIL_TEMP_CRITICAL_TEMP = 143.5  # Always alert if this level, ignore OIL_TEMP_WARNING_FREQUENCY_SECONDS
+OIL_TEMP_WARNING_TEMP = 141.5  # Minimum temp before warning
+OIL_TEMP_CRITICAL_TEMP = 142.75  # Always alert if this level, ignore OIL_TEMP_WARNING_FREQUENCY_SECONDS
 OIL_TEMP_WARNING_DIFF = 0.3  # Next warning if temp rises by this much
 OIL_TEMP_WARNING_FREQUENCY_SECONDS = 12  # Max frequency of warnings
 
+assert OIL_TEMP_CRITICAL_TEMP > OIL_TEMP_WARNING_TEMP
+
 REPORT_SOF_IN_PRACTICE = False
+
+IN_VR = False
 
 ALL_TYRES = (irsdk.PitSvFlags.lf_tire_change +
              irsdk.PitSvFlags.rf_tire_change +
@@ -36,6 +40,13 @@ ALL_TYRES = (irsdk.PitSvFlags.lf_tire_change +
 
 FRONT_TYRES = irsdk.PitSvFlags.rf_tire_change + irsdk.PitSvFlags.lf_tire_change
 REAR_TYRES = irsdk.PitSvFlags.rf_tire_change + irsdk.PitSvFlags.rr_tire_change
+
+
+class Speaker:
+
+    @staticmethod
+    def say(words: str):
+        speak.Speak(words)
 
 
 class State:
@@ -55,7 +66,7 @@ class ArduinoComms:
     def __init__(self, com_port, speed):
         self.ser = serial.Serial(com_port, speed)
         time.sleep(1)
-        s = int(round(time.time(), 0))
+        s = (datetime.datetime.now() - datetime.datetime(1970, 1, 1)).total_seconds()
         self.send_via_serial("X" + str(s) + "!")
 
     def send_via_serial(self, msg: str):  # Function to send data to the Arduino
@@ -89,6 +100,34 @@ class ButtonBoxServer:
         self._event_type = None
 
         self._critical_engine_temp_alert_sent = False
+        self._session_id = None
+        self._sub_session_id = None
+
+    def reset(self):
+
+        self._started_at = datetime.datetime.now()
+        self._pit_sv_flags = -1
+        self._tc = 0
+        self._bb = 0
+        self._oiltemp = 0
+        self._fuel = 0
+        self._sof = 0
+
+        self._last_temp_warning_at = datetime.datetime.now()
+        self._last_warning_temp = 0.0
+
+        self._sof_reported = False
+        self._drivers: Dict[str, int] = {}  # Driver name and irating
+
+        self._pit_stop_visits = -1
+        self._trk_loc: irsdk.TrkLoc = None
+
+        self._my_car_idx = ir['PlayerCarIdx']
+
+        self._critical_engine_temp_alert_sent = False
+        self._event_type = None
+        self._session_id = None
+        self._sub_session_id = None
 
     # our main loop, where we retrieve data
     # and do something useful with it
@@ -98,194 +137,202 @@ class ButtonBoxServer:
 
     def loop(self):
 
-        # on each tick we freeze buffer with live telemetry
-        # it is optional, useful if you use vars like CarIdxXXX
-        # in this way you will have consistent data from this vars inside one tick
-        # because sometimes while you retrieve one CarIdxXXX variable
-        # another one in next line of code can be changed
-        # to the next iracing internal tick_count
-        ir.freeze_var_buffer_latest()
+        try:
 
-        # retrieve live telemetry data
-        # check here for list of available variables
-        # https://github.com/kutu/pyirsdk/blob/master/vars.txt
-        # this is not full list, because some cars has additional
-        # specific variables, like brake bias, wings adjustment, etc
-        # t = ir['SessionTime']
-        # print('session time:', t)
+            ir.freeze_var_buffer_latest()
 
-        to_send: List[str] = list()
+            # retrieve live telemetry data
+            # check here for list of available variables
+            # https://github.com/kutu/pyirsdk/blob/master/vars.txt
+            # this is not full list, because some cars has additional
+            # specific variables, like brake bias, wings adjustment, etc
+            # t = ir['SessionTime']
+            # print('session time:', t)
 
-        weekend_info = ir['WeekendInfo']
-        if not self._event_type:
-            self._event_type = weekend_info['EventType']
+            to_send: List[str] = list()
 
-        is_on_track = ir['IsOnTrack'] == 1
+            weekend_info = ir['WeekendInfo']
+            if weekend_info:
+                if weekend_info['SessionID'] != self._session_id or weekend_info[
+                    'SubSessionID'] != self._sub_session_id:
+                    self.reset()
+                    self._session_id = weekend_info['SessionID']
+                    self._sub_session_id = weekend_info['SubSessionID']
 
-        if not is_on_track:
-            self._pit_stop_visits = -1
-            self._trk_loc = None
-        else:
-            trk_loc = ir['CarIdxTrackSurface'][self._my_car_idx]
-            if trk_loc and trk_loc != self._trk_loc:
-                if trk_loc == irsdk.TrkLoc.in_pit_stall and self._trk_loc:
-                    self._pit_stop_visits += 1
-                self._trk_loc = trk_loc
+                if not self._event_type:
+                    self._event_type = weekend_info['EventType']
 
-            fuel_level = ir['FuelLevel']
-            gallons = fuel_level / 3.78
-            if self._fuel != round(gallons, 2):
-                self._fuel = round(gallons, 2)
-                to_send.append("F " + str(round(gallons, 2)))
+            is_on_track = ir['IsOnTrack'] == 1
 
-            oiltemp = round(ir['OilTemp'], 1)
+            if not is_on_track:
+                self._pit_stop_visits = -1
+                self._trk_loc = None
+            else:
+                trk_loc = ir['CarIdxTrackSurface'][self._my_car_idx]
+                if trk_loc and trk_loc != self._trk_loc:
+                    if trk_loc == irsdk.TrkLoc.in_pit_stall and self._trk_loc:
+                        self._pit_stop_visits += 1
+                    self._trk_loc = trk_loc
 
-            if oiltemp > OIL_TEMP_CRITICAL_TEMP and not self._critical_engine_temp_alert_sent:
-                speak.Speak(f"Critical engine temp {oiltemp}")
-            elif oiltemp < OIL_TEMP_CRITICAL_TEMP:
-                self._critical_engine_temp_alert_sent = False
+                fuel_level = ir['FuelLevel']
+                gallons = fuel_level / 3.78
+                if self._fuel != round(gallons, 2):
+                    self._fuel = round(gallons, 2)
+                    to_send.append("F " + str(round(gallons, 2)))
 
-            if oiltemp > OIL_TEMP_WARNING_TEMP:
-                if (datetime.datetime.now() - self._last_temp_warning_at).seconds >= OIL_TEMP_WARNING_FREQUENCY_SECONDS:
+                oiltemp = round(ir['OilTemp'], 1)
 
-                    if oiltemp > self._last_warning_temp + OIL_TEMP_WARNING_DIFF:
-                        speak.Speak(f"Engine temp is {oiltemp}")
-                        self._last_temp_warning_at = datetime.datetime.now()
-                        self._last_warning_temp = oiltemp
+                if oiltemp > OIL_TEMP_CRITICAL_TEMP and not self._critical_engine_temp_alert_sent:
+                    Speaker.say(f"Critical engine temp {oiltemp}")
+                elif oiltemp < OIL_TEMP_CRITICAL_TEMP:
+                    self._critical_engine_temp_alert_sent = False
 
-                    elif oiltemp < self._last_warning_temp - OIL_TEMP_WARNING_DIFF:
-                        speak.Speak(f"Engine temp falling")
-                        self._last_temp_warning_at = datetime.datetime.now()
+                if oiltemp > OIL_TEMP_WARNING_TEMP:
+                    if (
+                            datetime.datetime.now() - self._last_temp_warning_at).seconds >= OIL_TEMP_WARNING_FREQUENCY_SECONDS:
 
-            elif self._last_warning_temp:
-                speak.Speak(f"Safe engine temp {oiltemp}")
-                self._last_warning_temp = 0.0
+                        if oiltemp > self._last_warning_temp + OIL_TEMP_WARNING_DIFF:
+                            Speaker.say(f"Engine temp is {oiltemp}")
+                            self._last_temp_warning_at = datetime.datetime.now()
+                            self._last_warning_temp = oiltemp
 
-            if self._oiltemp != oiltemp:
-                self._oiltemp = oiltemp
-                to_send.append(f"O {oiltemp}")
+                        elif oiltemp < self._last_warning_temp - OIL_TEMP_WARNING_DIFF:
+                            Speaker.say(f"Engine temp falling")
+                            self._last_temp_warning_at = datetime.datetime.now()
 
-        driver_info = ir['DriverInfo']
-        if driver_info:
-            driver_info_tick = ir.get_session_info_update_by_key('DriverInfo')
-            if driver_info_tick != state.last_driver_info_tick:
+                elif self._last_warning_temp:
+                    Speaker.say(f"Safe engine temp {oiltemp}")
+                    self._last_warning_temp = 0.0
 
-                track_temp = round(ir['TrackTempCrew'], 1)
-                if track_temp > 0 and state.track_temp != track_temp:
-                    state.track_temp = track_temp
-                    to_send.append('t ' + str(math.floor(track_temp)))
-                    speak.Speak(f"Track temp is {track_temp} degrees")
+                if self._oiltemp != oiltemp:
+                    self._oiltemp = oiltemp
+                    to_send.append(f"O {oiltemp}")
 
-                state.last_driver_info_tick = driver_info_tick
-                irating_sum = 0
-                drivers = driver_info['Drivers']
-                ln = 1600 / math.log(2)
+            driver_info = ir['DriverInfo']
+            if driver_info:
+                driver_info_tick = ir.get_session_info_update_by_key('DriverInfo')
+                if driver_info_tick != state.last_driver_info_tick:
 
-                current_drivers: Dict[str, int] = {}
-                for driver in drivers:
-                    if 'CarNumber' in driver:
-                        car_number = int(driver['CarNumber'])
-                        if car_number > 0 and driver['IsSpectator'] != 1:
-                            current_drivers[driver['UserName']] = driver['IRating']
-                            irating_sum += math.exp(- driver['IRating'] / ln)
+                    track_temp = round(ir['TrackTempCrew'], 1)
+                    if track_temp > 0 and state.track_temp != track_temp:
+                        state.track_temp = track_temp
+                        to_send.append('t ' + str(math.floor(track_temp)))
+                        Speaker.say(f"Track temp is {track_temp} degrees")
 
-                driver_count = len(current_drivers)
-                sof = int(math.floor(ln * math.log(driver_count / irating_sum)))
-                if sof != self._sof:
-                    self._sof = sof
-                    log.info("Drivers:{}  Total SoF:{}".format(driver_count, sof))
-                    if not self._sof_reported and (
-                            not self.is_practice() or (self.is_practice() and REPORT_SOF_IN_PRACTICE)):
-                        speak.Speak(f"SOF is {sof}")
-                        to_send.append(f"I {sof}")
-                        self._sof_reported = True
+                    state.last_driver_info_tick = driver_info_tick
+                    irating_sum = 0
+                    drivers = driver_info['Drivers']
+                    ln = 1600 / math.log(2)
 
-                new_drivers: Dict[str, int] = {name: irating for name, irating in current_drivers.items() if
-                                               name not in self._drivers}
+                    current_drivers: Dict[str, int] = {}
+                    for driver in drivers:
+                        if 'CarNumber' in driver:
+                            car_number = int(driver['CarNumber'] or 0)
+                            if car_number > 0 and driver['IsSpectator'] != 1:
+                                current_drivers[driver['UserName']] = driver['IRating']
+                                irating_sum += math.exp(- driver['IRating'] / ln)
+                            elif driver['IsSpectator'] == 1:
+                                log.info(f"{driver['UserName']} is spectating")
 
-                for name, irating in new_drivers.items():
-                    log.debug(f"Driver {name} - {irating}")
-                    if len(self._drivers) and self.is_practice():
-                        speak.Speak(f"{name} joined, rating {irating}")
+                    driver_count = len(current_drivers)
+                    sof = int(math.floor(ln * math.log(driver_count / irating_sum)))
+                    if sof != self._sof:
+                        self._sof = sof
+                        log.info("Drivers:{}  Total SoF:{}".format(driver_count, sof))
+                        if not self._sof_reported and (
+                                not self.is_practice() or (self.is_practice() and REPORT_SOF_IN_PRACTICE)):
+                            Speaker.say(f"SOF is {sof}")
+                            to_send.append(f"I {sof}")
+                            self._sof_reported = True
 
-                self._drivers = current_drivers
+                    new_drivers: Dict[str, int] = {name: irating for name, irating in current_drivers.items() if
+                                                   name not in self._drivers}
 
-        # retrieve CarSetup from session data
-        # we also check if CarSetup data has been updated
-        # with ir.get_session_info_update_by_key
-        # but first you need to request data, before check if its updated
-        car_setup = ir['CarSetup']
-        if car_setup:
-            car_setup_tick = ir.get_session_info_update_by_key('CarSetup')
-            if car_setup_tick != state.last_car_setup_tick:
-                state.last_car_setup_tick = car_setup_tick
-                # now you can go to garage, and do some changes with your setup
-                # and that this line will be printed, only when you change something
-                # and not every 1 sec
+                    for name, irating in new_drivers.items():
+                        log.debug(f"Driver {name} - {irating}")
+                        if len(self._drivers) and self.is_practice():
+                            Speaker.say(f"{name} joined, rating {irating}")
 
-        bb = ir['dcBrakeBias']
-        if bb and self._bb != bb:
-            bb = round(bb, 1)
-            if self._bb > 0:
-                # BB is changing
-                speak.Speak(f"Brake balance {bb}")
-            self._bb = bb
-            to_send.append("B " + str(bb))
+                    self._drivers = current_drivers
 
-        tc = ir['dcTractionControl']
-        if tc and self._tc != tc:
-            tc = round(tc, 0)
-            if self._tc > 0:
-                # BB is changing
-                speak.Speak(f"Traction is {tc}")
+            # retrieve CarSetup from session data
+            # we also check if CarSetup data has been updated
+            # with ir.get_session_info_update_by_key
+            # but first you need to request data, before check if its updated
+            car_setup = ir['CarSetup']
+            if car_setup:
+                car_setup_tick = ir.get_session_info_update_by_key('CarSetup')
+                if car_setup_tick != state.last_car_setup_tick:
+                    state.last_car_setup_tick = car_setup_tick
+                    # now you can go to garage, and do some changes with your setup
+                    # and that this line will be printed, only when you change something
+                    # and not every 1 sec
 
-            self._tc = tc
-            to_send.append("T " + str(tc))
+            bb = ir['dcBrakeBias']
+            if bb:
+                bb = round(bb, 1)
+                if not math.isclose(bb, self._bb):
+                    if not math.isclose(self._bb, 0.0):
+                        Speaker.say(f"B B {bb}")
+                    self._bb = bb
+                    to_send.append("B " + str(bb))
 
-        pit_sv_flags = ir['PitSvFlags']
-        if pit_sv_flags != self._pit_sv_flags:
+            tc = ir['dcTractionControl']
+            if tc and self._tc != int(tc):
+                tc = int(tc)
+                if self._tc > 0:
+                    # TC is changing
+                    Speaker.say(f"Traction {tc}")
+                self._tc = tc
+                to_send.append("T " + str(tc))
+                to_send.append("r 1")
 
-            #  Only speak if the pitflags have actually changed and car is on track
-            if self._pit_sv_flags != -1 and is_on_track and self._trk_loc != irsdk.TrkLoc.in_pit_stall:
+            pit_sv_flags = ir['PitSvFlags']
+            if pit_sv_flags != self._pit_sv_flags:
 
-                new_options = self._pit_sv_flags ^ pit_sv_flags
+                #  Only speak if the pitflags have actually changed and car is on track
+                if IN_VR and self._pit_sv_flags != -1 and is_on_track and self._trk_loc != irsdk.TrkLoc.in_pit_stall:
 
-                if new_options & ALL_TYRES:  # Something about tyres
-                    if pit_sv_flags & ALL_TYRES == 0:
-                        speak.Speak("Not changing tyres")
-                    elif pit_sv_flags & ALL_TYRES == ALL_TYRES:
-                        speak.Speak("Changing all tyres")
-                    elif pit_sv_flags & ALL_TYRES == FRONT_TYRES:
-                        speak.Speak("Changing only front tyres")
-                    elif pit_sv_flags & ALL_TYRES == REAR_TYRES:
-                        speak.Speak("Changing only rear tyres")
-                    else:
-                        if pit_sv_flags & irsdk.PitSvFlags.lf_tire_change:
-                            speak.Speak("Changing left front")
-                        if pit_sv_flags & irsdk.PitSvFlags.rf_tire_change:
-                            speak.Speak("Changing right front")
-                        if pit_sv_flags & irsdk.PitSvFlags.lr_tire_change:
-                            speak.Speak("Changing left rear")
-                        if pit_sv_flags & irsdk.PitSvFlags.rr_tire_change:
-                            speak.Speak("Changing right rear")
+                    new_options = self._pit_sv_flags ^ pit_sv_flags
 
-                if new_options & irsdk.PitSvFlags.fuel_fill:
-                    if pit_sv_flags & irsdk.PitSvFlags.fuel_fill:
-                        speak.Speak("Will refuel")
-                    else:
-                        speak.Speak("Will not refuel")
-                if new_options & irsdk.PitSvFlags.fast_repair and ir['PitRepairLeft'] > 0:
-                    if pit_sv_flags & irsdk.PitSvFlags.fast_repair:
-                        speak.Speak("Will repair")
-                    else:
-                        speak.Speak("Will not repair")
+                    if new_options & ALL_TYRES:  # Something about tyres
+                        if pit_sv_flags & ALL_TYRES == 0:
+                            Speaker.say("Not changing tyres")
+                        elif pit_sv_flags & ALL_TYRES == ALL_TYRES:
+                            Speaker.say("Changing all tyres")
+                        elif pit_sv_flags & ALL_TYRES == FRONT_TYRES:
+                            Speaker.say("Changing only front tyres")
+                        elif pit_sv_flags & ALL_TYRES == REAR_TYRES:
+                            Speaker.say("Changing only rear tyres")
+                        else:
+                            if pit_sv_flags & irsdk.PitSvFlags.lf_tire_change:
+                                Speaker.say("Changing left front")
+                            if pit_sv_flags & irsdk.PitSvFlags.rf_tire_change:
+                                Speaker.say("Changing right front")
+                            if pit_sv_flags & irsdk.PitSvFlags.lr_tire_change:
+                                Speaker.say("Changing left rear")
+                            if pit_sv_flags & irsdk.PitSvFlags.rr_tire_change:
+                                Speaker.say("Changing right rear")
 
-            self._pit_sv_flags = pit_sv_flags
-            to_send.append("P " + str(pit_sv_flags))
+                    if new_options & irsdk.PitSvFlags.fuel_fill:
+                        if pit_sv_flags & irsdk.PitSvFlags.fuel_fill:
+                            Speaker.say("Will refuel")
+                        else:
+                            Speaker.say("Will not refuel")
+                    if new_options & irsdk.PitSvFlags.fast_repair and ir['PitRepairLeft'] > 0:
+                        if pit_sv_flags & irsdk.PitSvFlags.fast_repair:
+                            Speaker.say("Will repair")
+                        else:
+                            Speaker.say("Will not repair")
 
-        if to_send:
-            msg = "!".join([_ for _ in to_send]) + "!"
-            arduino_comms.send_via_serial(msg=msg)
+                self._pit_sv_flags = pit_sv_flags
+                to_send.append("P " + str(pit_sv_flags))
+
+            if to_send:
+                msg = "!".join([_ for _ in to_send]) + "!"
+                arduino_comms.send_via_serial(msg=msg)
+        finally:
+            ir.unfreeze_var_buffer_latest()
 
 
 # here we check if we are connected to iracing
@@ -299,7 +346,7 @@ def check_iracing():
         ir.shutdown()
         log.info('irsdk disconnected')
     elif not state.ir_connected and ir.startup() and ir.is_initialized and ir.is_connected:
-        global bbs
+        global bbs 
         state.ir_connected = True
         bbs = ButtonBoxServer()
         log.info('irsdk connected')

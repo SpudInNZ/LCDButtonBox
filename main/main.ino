@@ -16,6 +16,8 @@ uint8_t I2C_LCD_ADDRESS = 0x51; //Device address configuration, the default valu
 #define PRESSED LOW
 #define NOTPRESSED HIGH
 
+#define DEBUGBOX FALSE
+
 struct iRacingConstants
 {
     const int lf_tire_change     = 0x01;
@@ -44,7 +46,6 @@ void timerIsr() {
 
 }
 
-
 void FlashLED(int pinNumber, int flashCount = 3)
 {
   for(int count = 0; count < flashCount; ++count)
@@ -62,9 +63,9 @@ void setup() {
   {
     pinMode(ledPin, OUTPUT);
   }
-  encoders[2] = new ClickEncoder(A1, A0, -1, 2);
-  encoders[1] = new ClickEncoder(A3, A2, -1, 2);
-  encoders[0] = new ClickEncoder(A7, A6, -1, 2);
+  encoders[2] = new ClickEncoder(A0, A1, -1, 2);
+  encoders[1] = new ClickEncoder(A2, A3, -1, 2);
+  encoders[0] = new ClickEncoder(A6, A7, -1, 2);
   for(int f = 0; f < ENCODERS; ++f)
   {
     pinMode(firstPinToJoystick+(f*2), OUTPUT);
@@ -73,6 +74,31 @@ void setup() {
     digitalWrite(firstPinToJoystick+(f*2)+1, LOW);
     encoders[f] -> setAccelerationEnabled(true);
   }
+
+
+  Wire.begin();         //I2C controller initialization.
+  LCD.CleanAll(WHITE);    //Clean the screen with black or white.
+  LCD.FontModeConf(Font_6x12, FM_ANL_AAA, BLACK_BAC); 
+
+  Timer1.initialize(500);
+  Timer1.attachInterrupt(timerIsr);
+
+  LCD.CharGotoXY(9, 24);
+  LCD.print("Bevan's Button Box");
+  LCD.CharGotoXY(9, 36);
+  LCD.print("Firmware 22/10/18-3");
+  if (DEBUGBOX)
+  {
+    LCD.CharGotoXY(9, 48);
+    LCD.print("Debug mode enabled");
+  }
+  blinkAll(); 
+  LCD.CleanAll(WHITE);    //Clean the screen with black or white.
+  
+}
+
+void blinkAll()
+{
   for(int x = 0; x< 3; ++x)
   {
     for(int c = 14; c < 19; ++c)
@@ -86,14 +112,6 @@ void setup() {
     }
     delay(200);
   }
-
-  Wire.begin();         //I2C controller initialization.
-  LCD.CleanAll(WHITE);    //Clean the screen with black or white.
-  LCD.FontModeConf(Font_6x12, FM_ANL_AAA, BLACK_BAC); 
-
-  Timer1.initialize(500);
-  Timer1.attachInterrupt(timerIsr); 
- 
 }
 
 void displayTCandBB() 
@@ -109,12 +127,6 @@ void displayTCandBB()
     s = s + " TC: ";
     s = s + tc;
     s = s + "  ";
-    if (tc == 1) {
-      digitalWrite(TRACTION_LED, HIGH);
-    }
-    else {
-      digitalWrite(TRACTION_LED, LOW);
-    }
   }
   else 
   {
@@ -127,20 +139,38 @@ void displayTCandBB()
 
 void handleEncoders() 
 {
+  
   for (int f= 0; f< ENCODERS; ++f)    
   {
+    if (DEBUGBOX) 
+    {
+      LCD.CharGotoXY(3, 8 * (f+1));
+    }
+    
     int value = encoders[f] -> getValue();
     if (value > 0)
     {
+      if (DEBUGBOX) 
+      {
+        LCD.print("+");
+      }
        digitalWrite(firstPinToJoystick + f*2, HIGH);
        delay(30);
        digitalWrite(firstPinToJoystick + f*2, LOW);
     }
     else if (value < 0)
     {
+      if (DEBUGBOX) 
+      {
+       LCD.print("-");
+      }
        digitalWrite(firstPinToJoystick + f*2+1, HIGH);
        delay(30);
        digitalWrite(firstPinToJoystick + f*2+1, LOW);
+    }
+    else if DEBUGBOX
+    {
+       LCD.print("*");
     }
   }
 }
@@ -203,13 +233,26 @@ void loop()
           LCD.print("Fuel:" + str + "  ");
           break;
         }
-        case 'T': // Traction control
+        case 'T': // Traction control value
         {
           str.remove(0,1);
           tc = str.toInt();
           displayTCandBB();
           break;
         }
+        case 'r': // Traction control on/off
+        {
+          str.remove(0,1);
+          tc = str.toInt();
+          if (tc == 0) {
+            digitalWrite(TRACTION_LED, HIGH);
+          }
+          else {
+            digitalWrite(TRACTION_LED, LOW);
+          }
+          break;
+        }
+
         case 'B': // Brake bias
         {
           str.remove(0,1);
@@ -288,6 +331,3 @@ void loop()
       }
   }
 }
-
-
-
